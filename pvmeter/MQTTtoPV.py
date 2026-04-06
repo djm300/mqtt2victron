@@ -47,9 +47,13 @@ Runtime notes:
 
 MQTT expectations:
 
-- PV input topics default to ``config["MQTT"]["topic"]/...``.
+- PV input topics default to ``config["MQTT"]["topic"]/power``,
+  ``.../voltage``, ``.../current``, ``.../frequency``, ``.../energy_180``,
+  and ``.../energy_280``.
 - EV charger input topics are optional and only used when the
-  ``[EVCHARGER]`` section is enabled.
+  ``[EVCHARGER]`` section is enabled. The EV root topic can carry either a
+  JSON payload or flat subtopics such as ``<ev_root>/power`` or
+  ``<ev_root>/status``.
 
 Installation quick reference:
 
@@ -189,7 +193,7 @@ def on_disconnect(client, userdata, rc):
         print(e)
 
 def on_connect(client, userdata, flags, rc):
-        """Subscribe to the configured PV and EV topic roots after connect."""
+        """Subscribe to ``config['MQTT']['topic']/#`` and optional EV topics."""
         global verbunden
         if rc == 0:
             print("Connected to MQTT Broker!")
@@ -211,6 +215,11 @@ def on_message(client, userdata, msg):
         topic = msg.topic
         payload_text = _payload_to_text(msg.payload)
 
+        # EV charger topics use the dedicated root configured in
+        # ``[EVCHARGER].topic``. Messages can be a JSON document on the root
+        # topic itself or flat subtopics below it, for example:
+        # ``power/evcharger/power``, ``power/evcharger/current``, or
+        # ``power/evcharger/status``.
         if ev_enabled and evdbusservice and ev_root_topic and (
             topic == ev_root_topic or topic.startswith(ev_root_topic + "/")
         ):
@@ -219,6 +228,9 @@ def on_message(client, userdata, msg):
             evdbusservice.ingest_mqtt(topic, payload_text)
             return
 
+        # PV meter topics are read from ``config['MQTT']['topic']``:
+        # ``.../power``, ``.../voltage``, ``.../current``, ``.../frequency``,
+        # ``.../energy_180``, and ``.../energy_280``.
         if topic == config["MQTT"]["topic"] + "/power":
             # PV power is inverted so generation appears as a positive value in
             # Victron instead of a negative consumption value.
@@ -254,7 +266,8 @@ class DbusDummyService:
 
   The class registers the service name and the standard PV inverter DBus paths
   expected by Venus OS. The MQTT callbacks populate the module-level variables
-  and this class mirrors those values into DBus.
+  and this class mirrors those values into DBus. It is driven by the PV topic
+  root configured under ``[MQTT].topic``.
   """
   def __init__(self, servicename, deviceinstance, paths, productname=config["DEFAULT"]["device_name"], connection=config["MQTT"]["connection_name"]):
     self._dbusservice = VeDbusService(servicename)
@@ -364,7 +377,8 @@ class EvChargerDummyService:
 
   This service is optional and is only created when the ``[EVCHARGER]``
   section is enabled. It supports both JSON payloads and flat MQTT topic
-  updates, then mirrors the resulting state into Victron EV charger paths.
+  updates from the configured ``[EVCHARGER].topic`` root, then mirrors the
+  resulting state into Victron EV charger paths.
   """
   def __init__(self, servicename, deviceinstance, productname, connection, topic_root, position, model, default_voltage, default_frequency, max_current):
     self._dbusservice = VeDbusService(servicename)
@@ -443,7 +457,7 @@ class EvChargerDummyService:
     self._dbusservice.register()
 
   def ingest_mqtt(self, topic, payload_text):
-    """Accept one MQTT message and update the EV charger model."""
+    """Accept one MQTT message from the EV root topic or a child subtopic."""
     if topic == self._topic_root:
       try:
         payload = json.loads(payload_text)
@@ -457,7 +471,7 @@ class EvChargerDummyService:
     self._update()
 
   def _ingest_json(self, payload):
-    """Consume JSON payloads with ``Ac`` and top-level charger fields."""
+    """Consume JSON payloads such as ``{"Ac": {"Power": ...}, "Current": ...}``."""
     ac = payload.get('Ac', {})
     if 'Power' in ac:
       self._power = _as_float(ac.get('Power'), self._power)
@@ -506,7 +520,7 @@ class EvChargerDummyService:
       self._power = value
 
   def _ingest_suffix(self, suffix, payload_text):
-    """Map flat MQTT subtopics into the EV charger state model."""
+    """Map flat MQTT subtopics like ``power`` or ``session/energy`` into state."""
     suffix = suffix.lower()
     value_float = _as_float(payload_text, None)
     value_int = _as_int(payload_text, None)
@@ -558,7 +572,8 @@ class EvChargerDummyService:
     """Mirror the current EV charger model into Victron DBus."""
     total_power = self._power
     if total_power is None:
-      # If no total power is supplied, derive it from the per-phase values.
+      # If the charger only publishes phase topics such as ``l1/power`` and
+      # ``l2/power``, derive a total power value for the Victron UI.
       phase_values = [value for value in [self._l1_power, self._l2_power, self._l3_power] if value is not None]
       if phase_values:
         total_power = sum(phase_values)
