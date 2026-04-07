@@ -164,7 +164,7 @@ Example EV charger messages:
 
 - `power/evcharger/power = 2200`
 
-The EV charger section is disabled by default. Set `enabled = true` in `[EVCHARGER]` to activate it.
+Both services work with only the `power` topic. The EV charger section is disabled by default. Set `enabled = true` in `[EVCHARGER]` to activate it.
 
 ## Concrete Examples
 
