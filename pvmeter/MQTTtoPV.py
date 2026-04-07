@@ -47,13 +47,12 @@ Runtime notes:
 
 MQTT expectations:
 
-- PV input topics default to ``config["MQTT"]["topic"]/power``,
-  ``.../voltage``, ``.../current``, ``.../frequency``, ``.../energy_180``,
-  and ``.../energy_280``.
+- PV needs only ``config["MQTT"]["topic"]/power``. Voltage, current,
+  frequency, and energy values are optional and will be defaulted or derived.
 - EV charger input topics are optional and only used when the
-  ``[EVCHARGER]`` section is enabled. The EV root topic can carry either a
-  JSON payload or flat subtopics such as ``<ev_root>/power`` or
-  ``<ev_root>/status``.
+  ``[EVCHARGER]`` section is enabled. EV also works with only a power reading;
+  current and phase values are derived from that power plus the configured
+  default voltage.
 
 Installation quick reference:
 
@@ -193,7 +192,7 @@ def on_disconnect(client, userdata, rc):
         print(e)
 
 def on_connect(client, userdata, flags, rc):
-        """Subscribe to ``config['MQTT']['topic']/#`` and optional EV topics."""
+        """Subscribe to the PV root topic and optional EV root topic."""
         global verbunden
         if rc == 0:
             print("Connected to MQTT Broker!")
@@ -228,9 +227,9 @@ def on_message(client, userdata, msg):
             evdbusservice.ingest_mqtt(topic, payload_text)
             return
 
-        # PV meter topics are read from ``config['MQTT']['topic']``:
-        # ``.../power``, ``.../voltage``, ``.../current``, ``.../frequency``,
-        # ``.../energy_180``, and ``.../energy_280``.
+        # PV meter topics are read from ``config['MQTT']['topic']``. Only
+        # ``.../power`` is required. The other PV topics are optional and only
+        # refine the values shown in Victron.
         if topic == config["MQTT"]["topic"] + "/power":
             # PV power is inverted so generation appears as a positive value in
             # Victron instead of a negative consumption value.
@@ -267,7 +266,7 @@ class DbusDummyService:
   The class registers the service name and the standard PV inverter DBus paths
   expected by Venus OS. The MQTT callbacks populate the module-level variables
   and this class mirrors those values into DBus. It is driven by the PV topic
-  root configured under ``[MQTT].topic``.
+  root configured under ``[MQTT].topic`` and only requires a power value.
   """
   def __init__(self, servicename, deviceinstance, paths, productname=config["DEFAULT"]["device_name"], connection=config["MQTT"]["connection_name"]):
     self._dbusservice = VeDbusService(servicename)
@@ -316,6 +315,9 @@ class DbusDummyService:
     if not voltage is None:
         self._dbusservice['/Ac/Voltage'] = voltage
     else:
+        # When only power is available, use the configured nominal voltage to
+        # derive the current and to keep the UI populated with a reasonable
+        # voltage value.
         self._dbusservice['/Ac/Voltage'] = float(config["DEFAULT"]["voltage"])
     if not energy_280 is None:
         self._dbusservice['/Ac/Energy/Forward'] = energy_280
@@ -335,6 +337,8 @@ class DbusDummyService:
     if not frequency is None:
         self._dbusservice['/Ac/L1/Frequency'] = frequency
     else:
+        # Frequency is optional for power-only feeds; the default keeps the
+        # service stable in the GUI.
         self._dbusservice['/Ac/L1/Frequency'] = float(config["DEFAULT"]["frequency"])
     if not energy_280 is None:
         self._dbusservice['/Ac/L1/Energy/Forward'] = energy_280
@@ -378,7 +382,8 @@ class EvChargerDummyService:
   This service is optional and is only created when the ``[EVCHARGER]``
   section is enabled. It supports both JSON payloads and flat MQTT topic
   updates from the configured ``[EVCHARGER].topic`` root, then mirrors the
-  resulting state into Victron EV charger paths.
+  resulting state into Victron EV charger paths. It also works with a single
+  power value and derives charging current from the configured voltage.
   """
   def __init__(self, servicename, deviceinstance, productname, connection, topic_root, position, model, default_voltage, default_frequency, max_current):
     self._dbusservice = VeDbusService(servicename)
@@ -573,7 +578,8 @@ class EvChargerDummyService:
     total_power = self._power
     if total_power is None:
       # If the charger only publishes phase topics such as ``l1/power`` and
-      # ``l2/power``, derive a total power value for the Victron UI.
+      # ``l2/power``, derive a total power value for the Victron UI. If only
+      # a single power reading exists, that value is used directly.
       phase_values = [value for value in [self._l1_power, self._l2_power, self._l3_power] if value is not None]
       if phase_values:
         total_power = sum(phase_values)

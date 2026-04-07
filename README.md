@@ -46,9 +46,12 @@ The grid-meter-script expects only three MQTT-topics to work:
 The power has to be submitted in "Watt" and the two energies in "Watt-hours". The power is then distributed over all three phases automatically. If your grid-meter supports individual phase-powers, you might use the three topics MQTT_PATH/p_l1 to .../p_l3.
 
 ## PV-Meter
-The PV meter is meant for an inverter or meter that can publish MQTT directly. The script expects these topics below the configured PV root topic:
+The PV meter is meant for an inverter or meter that can publish MQTT directly. The only required topic is:
 
 - MQTT_PATH/power
+
+Optional topics:
+
 - MQTT_PATH/voltage
 - MQTT_PATH/current
 - MQTT_PATH/frequency
@@ -63,6 +66,8 @@ All parameters are in their basic units:
 - frequency in Hz
 - energy values in Watt-hours
 
+If you only publish `power`, the script derives current from the configured nominal voltage and fills in voltage/frequency from defaults.
+
 The PV side inverts the sign of `power` and `current` before publishing to DBus. This is intentional so that generation/injection is represented correctly in the Victron UI.
 
 How the PV driver maps MQTT to Victron DBus:
@@ -76,7 +81,7 @@ How the PV driver maps MQTT to Victron DBus:
 - `position` in `config.ini` -> `/Position`
 - `max` in `config.ini` -> `/Ac/MaxPower`
 
-If you only provide power, the script estimates current from the configured nominal voltage.
+Power-only is enough for the PV inverter to show up in Victron.
 
 ## MQTT To DBus Mapping
 
@@ -100,38 +105,38 @@ If you only provide power, the script estimates current from the configured nomi
 Notes:
 
 - `energy_180` is accepted by the parser but is not currently written to DBus.
-- If `current` is missing, the driver estimates it from `power / voltage`.
+- Power-only is enough for the PV inverter to show up in Victron.
 
 ### EV Charger
 
 | MQTT topic | DBus path | Notes |
 | --- | --- | --- |
-| `topic/power` | `/Ac/Power` | Total charging power |
+| `topic/power` | `/Ac/Power` | Total charging power; this is the only required EV field |
 | `topic/power` | `/Ac/L1/Power` | Same value as total power if phase data is not provided |
 | `topic/l1/power` | `/Ac/L1/Power` | Per-phase L1 power |
 | `topic/l2/power` | `/Ac/L2/Power` | Per-phase L2 power |
 | `topic/l3/power` | `/Ac/L3/Power` | Per-phase L3 power |
-| `topic/current` | `/Current` | Actual charging current |
+| `topic/current` | `/Current` | Optional; otherwise derived from power |
 | `topic/current` | `/Ac/L1/Current` | Same value as `/Current` |
-| `topic/maxcurrent` | `/MaxCurrent` | Maximum allowed current |
-| `topic/setcurrent` | `/SetCurrent` | Requested current setpoint |
+| `topic/maxcurrent` | `/MaxCurrent` | Optional control value |
+| `topic/setcurrent` | `/SetCurrent` | Optional control value |
 | `topic/autostart` | `/AutoStart` | 0 or 1 |
 | `topic/enabledisplay` | `/EnableDisplay` | 0 or 1 |
 | `topic/mode` | `/Mode` | 0 manual, 1 automatic, 2 scheduled |
 | `topic/startstop` | `/StartStop` | 0 or 1 |
-| `topic/status` | `/Status` | EV charger status code |
-| `topic/chargingtime` | `/ChargingTime` | Session charging time in seconds |
-| `topic/session/time` | `/Session/Time` | Session time in seconds |
-| `topic/session/energy` | `/Session/Energy` | Session energy in kWh |
-| `topic/session/cost` | `/Session/Cost` | Session cost |
-| `topic/connected` | `/Connected` | 0 or 1 |
+| `topic/status` | `/Status` | Optional status code |
+| `topic/chargingtime` | `/ChargingTime` | Optional session charging time in seconds |
+| `topic/session/time` | `/Session/Time` | Optional session time in seconds |
+| `topic/session/energy` | `/Session/Energy` | Optional session energy in kWh |
+| `topic/session/cost` | `/Session/Cost` | Optional session cost |
+| `topic/connected` | `/Connected` | Optional 0 or 1 |
 | `topic/ac/energy/forward` | `/Ac/Energy/Forward` | Charging energy in kWh |
 | JSON `Ac.Power` | `/Ac/Power` | Same as `topic/power` |
 | JSON `Ac.L1.Power` | `/Ac/L1/Power` | Same as `topic/l1/power` |
 | JSON `Ac.L2.Power` | `/Ac/L2/Power` | Same as `topic/l2/power` |
 | JSON `Ac.L3.Power` | `/Ac/L3/Power` | Same as `topic/l3/power` |
 | JSON `Ac.Energy.Forward` | `/Ac/Energy/Forward` | Same as `topic/ac/energy/forward` |
-| JSON `Current` | `/Current` | Same as `topic/current` |
+| JSON `Current` | `/Current` | Optional; otherwise derived from power |
 | JSON `MaxCurrent` | `/MaxCurrent` | Same as `topic/maxcurrent` |
 | JSON `SetCurrent` | `/SetCurrent` | Same as `topic/setcurrent` |
 | JSON `AutoStart` | `/AutoStart` | Same as `topic/autostart` |
@@ -154,20 +159,10 @@ Example configuration:
 Example PV messages:
 
 - `power/pvmeter/power = 1800`
-- `power/pvmeter/voltage = 231`
-- `power/pvmeter/current = 7.8`
-- `power/pvmeter/frequency = 50`
-- `power/pvmeter/energy_180 = 123450`
-- `power/pvmeter/energy_280 = 678900`
 
 Example EV charger messages:
 
 - `power/evcharger/power = 2200`
-- `power/evcharger/current = 9.6`
-- `power/evcharger/maxcurrent = 16`
-- `power/evcharger/setcurrent = 10`
-- `power/evcharger/status = 2`
-- `power/evcharger/session/energy = 7.4`
 
 The EV charger section is disabled by default. Set `enabled = true` in `[EVCHARGER]` to activate it.
 
@@ -177,23 +172,13 @@ The EV charger section is disabled by default. Set `enabled = true` in `[EVCHARG
 
 ```text
 power/pvmeter/power = 1850
-power/pvmeter/voltage = 231
-power/pvmeter/current = 8.0
-power/pvmeter/frequency = 50
-power/pvmeter/energy_180 = 124200
-power/pvmeter/energy_280 = 681500
 ```
 
 If your device publishes JSON instead:
 
 ```json
 {
-  "power": 1850,
-  "voltage": 231,
-  "current": 8.0,
-  "frequency": 50,
-  "energy_180": 124200,
-  "energy_280": 681500
+  "power": 1850
 }
 ```
 
@@ -201,48 +186,13 @@ If your device publishes JSON instead:
 
 ```text
 power/evcharger/power = 3200
-power/evcharger/current = 14.0
-power/evcharger/maxcurrent = 16
-power/evcharger/setcurrent = 16
-power/evcharger/status = 2
-power/evcharger/autostart = 1
-power/evcharger/enabledisplay = 1
-power/evcharger/mode = 1
-power/evcharger/startstop = 1
-power/evcharger/session/time = 5400
-power/evcharger/session/energy = 9.4
-power/evcharger/session/cost = 2.3
-power/evcharger/connected = 1
 ```
 
 If your EV charger publishes JSON instead:
 
 ```json
 {
-  "Ac": {
-    "Power": 3200,
-    "L1": {
-      "Power": 3200
-    },
-    "Energy": {
-      "Forward": 9.4
-    }
-  },
-  "Current": 14.0,
-  "MaxCurrent": 16,
-  "SetCurrent": 16,
-  "AutoStart": 1,
-  "EnableDisplay": 1,
-  "Mode": 1,
-  "StartStop": 1,
-  "Status": 2,
-  "ChargingTime": 5400,
-  "Session": {
-    "Time": 5400,
-    "Energy": 9.4,
-    "Cost": 2.3
-  },
-  "Connected": 1
+  "power": 3200
 }
 ```
 
